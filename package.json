@@ -6,9 +6,12 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "seed": "tsx src/scripts/runSeed.ts",
+    "test:api": "tsx src/scripts/testGooglePlaces.ts"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.74.0",
     "framer-motion": "^11.0.0",
     "lucide-react": "^0.441.0",
     "react": "^18.3.1",
@@ -22,8 +25,10 @@
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^4.3.1",
     "autoprefixer": "^10.4.20",
+    "dotenv": "^17.2.3",
     "postcss": "^8.4.47",
     "tailwindcss": "^3.4.10",
+    "tsx": "^4.7.0",
     "typescript": "^5.6.2",
     "vite": "^5.4.8"
   }

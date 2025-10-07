@@ -1,33 +1,31 @@
-import React, { useState, useRef, useEffect } from 'react'
+import React, { useState, useRef } from 'react'
 import { motion, AnimatePresence, useMotionValue, useTransform } from 'framer-motion'
-import { Heart, X, RotateCcw, ArrowLeft, ArrowRight } from 'lucide-react'
+import { Heart, X, RotateCcw, ArrowLeft } from 'lucide-react'
 import Card from './Card'
-import { EnrichedCard } from '@/lib/api'
+import { Venue } from '../store/useTaste'
 
 type Props = {
-  items: EnrichedCard[]
-  onSwipe: (id: string, direction: 'left' | 'right', attractionData?: any) => void
+  venues: Venue[]
+  onSwipe: (id: string, direction: 'left' | 'right', venueData?: any) => void
 }
 
-export default function SwipeDeck({ items, onSwipe }: Props) {
+export function SwipeDeck({ venues, onSwipe }: Props) {
   const [currentIndex, setCurrentIndex] = useState(0)
   const [isDragging, setIsDragging] = useState(false)
   const [swipeDirection, setSwipeDirection] = useState<'left' | 'right' | null>(null)
-  const [showOverlay, setShowOverlay] = useState(false)
   const constraintsRef = useRef(null)
   
   const x = useMotionValue(0)
   const rotate = useTransform(x, [-300, 300], [-30, 30])
   const opacity = useTransform(x, [-150, -50, 0, 50, 150], [0, 1, 1, 1, 0])
 
-  const currentItem = items[currentIndex]
+  const currentVenue = venues[currentIndex]
 
   const handleSwipe = (direction: 'left' | 'right') => {
-    if (!currentItem) return
+    if (!currentVenue) return
     
     setSwipeDirection(direction)
-    setShowOverlay(true)
-    onSwipe(currentItem.id, direction, currentItem)
+    onSwipe(currentVenue.id, direction, currentVenue)
     
     // Add haptic feedback if available
     if (navigator.vibrate) {
@@ -37,7 +35,6 @@ export default function SwipeDeck({ items, onSwipe }: Props) {
     setTimeout(() => {
       setCurrentIndex(prev => prev + 1)
       setSwipeDirection(null)
-      setShowOverlay(false)
       x.set(0)
     }, 400)
   }
@@ -46,7 +43,7 @@ export default function SwipeDeck({ items, onSwipe }: Props) {
     setIsDragging(true)
   }
 
-  const handleDragEnd = (_, { offset, velocity }) => {
+  const handleDragEnd = (_: any, { offset, velocity }: any) => {
     setIsDragging(false)
     const swipeThreshold = 100
     const velocityThreshold = 500
@@ -60,7 +57,7 @@ export default function SwipeDeck({ items, onSwipe }: Props) {
     }
   }
 
-  const handleDrag = (_, { offset }) => {
+  const handleDrag = (_: any, { offset }: any) => {
     const threshold = 50
     if (offset.x > threshold) {
       setSwipeDirection('right')
@@ -77,10 +74,10 @@ export default function SwipeDeck({ items, onSwipe }: Props) {
     }
   }
 
-  if (!currentItem) {
+  if (!currentVenue) {
     return (
       <div className="flex flex-col items-center justify-center py-20 text-neutral-500">
-        <div className="w-24 h-24 rounded-full gradient-bg flex items-center justify-center mb-6 shadow-soft animate-pulse">
+        <div className="w-24 h-24 rounded-full bg-gradient-to-br from-pink-400 to-purple-500 flex items-center justify-center mb-6 shadow-lg animate-pulse">
           <Heart className="w-12 h-12 text-white" />
         </div>
         <h3 className="text-2xl font-bold text-neutral-700 mb-2">All done!</h3>
@@ -132,7 +129,16 @@ export default function SwipeDeck({ items, onSwipe }: Props) {
           whileDrag={{ scale: 1.05 }}
         >
           <div className="relative">
-            <Card {...currentItem} />
+            <Card 
+              title={currentVenue.name}
+              subtitle={currentVenue.category}
+              tags={currentVenue.tags}
+              image={currentVenue.photos?.[0]}
+              info={currentVenue.description}
+              rating={currentVenue.rating}
+              address={currentVenue.location?.address}
+              priceLevel={currentVenue.price_level}
+            />
             
             {/* Swipe overlay indicators */}
             <AnimatePresence>
@@ -154,8 +160,8 @@ export default function SwipeDeck({ items, onSwipe }: Props) {
 
             {/* Card counter */}
             <div className="absolute top-4 right-4 flex gap-2">
-              <div className="bg-white/90 backdrop-blur-sm rounded-full px-3 py-1 text-sm font-medium text-neutral-600 shadow-soft">
-                {currentIndex + 1} of {items.length}
+              <div className="bg-white/90 backdrop-blur-sm rounded-full px-3 py-1 text-sm font-medium text-neutral-600 shadow-lg">
+                {currentIndex + 1} of {venues.length}
               </div>
             </div>
 
@@ -190,7 +196,7 @@ export default function SwipeDeck({ items, onSwipe }: Props) {
       <div className="flex justify-center gap-8 mt-8">
         <button
           onClick={() => handleSwipe('left')}
-          className="w-16 h-16 rounded-full bg-white border-4 border-red-200 flex items-center justify-center text-red-500 hover:bg-red-50 hover:border-red-300 transition-all duration-200 hover:scale-110 shadow-soft hover:shadow-medium active:scale-95"
+          className="w-16 h-16 rounded-full bg-white border-4 border-red-200 flex items-center justify-center text-red-500 hover:bg-red-50 hover:border-red-300 transition-all duration-200 hover:scale-110 shadow-lg hover:shadow-xl active:scale-95"
         >
           <X className="w-8 h-8" />
         </button>
@@ -198,7 +204,7 @@ export default function SwipeDeck({ items, onSwipe }: Props) {
         {currentIndex > 0 && (
           <button
             onClick={undoLastSwipe}
-            className="w-12 h-12 rounded-full bg-white border-2 border-neutral-200 flex items-center justify-center text-neutral-500 hover:bg-neutral-50 hover:border-neutral-300 transition-all duration-200 hover:scale-110 shadow-soft"
+            className="w-12 h-12 rounded-full bg-white border-2 border-neutral-200 flex items-center justify-center text-neutral-500 hover:bg-neutral-50 hover:border-neutral-300 transition-all duration-200 hover:scale-110 shadow-lg"
           >
             <ArrowLeft className="w-5 h-5" />
           </button>
@@ -206,7 +212,7 @@ export default function SwipeDeck({ items, onSwipe }: Props) {
         
         <button
           onClick={() => handleSwipe('right')}
-          className="w-16 h-16 rounded-full bg-white border-4 border-green-200 flex items-center justify-center text-green-500 hover:bg-green-50 hover:border-green-300 transition-all duration-200 hover:scale-110 shadow-soft hover:shadow-medium active:scale-95"
+          className="w-16 h-16 rounded-full bg-white border-4 border-green-200 flex items-center justify-center text-green-500 hover:bg-green-50 hover:border-green-300 transition-all duration-200 hover:scale-110 shadow-lg hover:shadow-xl active:scale-95"
         >
           <Heart className="w-8 h-8" />
         </button>
@@ -214,7 +220,7 @@ export default function SwipeDeck({ items, onSwipe }: Props) {
 
       {/* Enhanced progress indicator */}
       <div className="flex justify-center gap-2 mt-6">
-        {items.slice(0, Math.min(8, items.length)).map((_, index) => (
+        {venues.slice(0, Math.min(8, venues.length)).map((_, index) => (
           <motion.div
             key={index}
             className={`w-3 h-3 rounded-full transition-all duration-300 ${
@@ -230,9 +236,9 @@ export default function SwipeDeck({ items, onSwipe }: Props) {
             }}
           />
         ))}
-        {items.length > 8 && (
+        {venues.length > 8 && (
           <span className="text-xs text-neutral-400 ml-2 flex items-center">
-            +{items.length - 8} more
+            +{venues.length - 8} more
           </span>
         )}
       </div>
@@ -249,3 +255,5 @@ export default function SwipeDeck({ items, onSwipe }: Props) {
     </div>
   )
 }
+
+export default SwipeDeck

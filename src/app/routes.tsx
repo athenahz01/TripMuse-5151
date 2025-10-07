@@ -3,7 +3,7 @@ import Onboarding from '@/pages/Onboarding'
 import Interests from '@/pages/Interests'
 import Traits from '@/pages/Traits'
 import Destination from '@/pages/Destination'
-import Discover from '@/pages/Discover'
+import { Discover } from '@/pages/Discover' // Changed to named import
 
 type R = { path: string; element: ComponentType }
 const routes: R[] = [

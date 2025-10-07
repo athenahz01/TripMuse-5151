@@ -3,10 +3,34 @@
 // - Attractions: Google Places, Foursquare, TripAdvisor
 // - Info: Wikipedia, Google Places details
 
-const UNSPLASH_KEY = import.meta.env.VITE_UNSPLASH_KEY as string | undefined
-const PEXELS_KEY = import.meta.env.VITE_PEXELS_KEY as string | undefined
-const GOOGLE_PLACES_KEY = import.meta.env.VITE_GOOGLE_PLACES_KEY as string | undefined
-const FOURSQUARE_KEY = import.meta.env.VITE_FOURSQUARE_KEY as string | undefined
+// Environment variable access that works in both browser and Node.js
+const UNSPLASH_KEY = (() => {
+  if (typeof import.meta !== 'undefined' && import.meta.env) {
+    return import.meta.env.VITE_UNSPLASH_ACCESS_KEY as string | undefined;
+  }
+  return process.env.VITE_UNSPLASH_ACCESS_KEY as string | undefined;
+})();
+
+const PEXELS_KEY = (() => {
+  if (typeof import.meta !== 'undefined' && import.meta.env) {
+    return import.meta.env.VITE_PEXELS_KEY as string | undefined;
+  }
+  return process.env.VITE_PEXELS_KEY as string | undefined;
+})();
+
+const GOOGLE_PLACES_KEY = (() => {
+  if (typeof import.meta !== 'undefined' && import.meta.env) {
+    return import.meta.env.VITE_GOOGLE_PLACES_KEY as string | undefined;
+  }
+  return process.env.VITE_GOOGLE_PLACES_KEY as string | undefined;
+})();
+
+const FOURSQUARE_KEY = (() => {
+  if (typeof import.meta !== 'undefined' && import.meta.env) {
+    return import.meta.env.VITE_FOURSQUARE_KEY as string | undefined;
+  }
+  return process.env.VITE_FOURSQUARE_KEY as string | undefined;
+})();
 
 // Cache for API responses
 const cache = new Map<string, any>()
@@ -49,10 +73,20 @@ type GooglePlace = {
   name: string
   rating?: number
   user_ratings_total?: number
+  price_level?: number
   photos?: Array<{ photo_reference: string }>
   types: string[]
   vicinity?: string
   formatted_address?: string
+  website?: string
+  formatted_phone_number?: string
+  opening_hours?: { open_now: boolean }
+  geometry?: {
+    location?: {
+      lat: number
+      lng: number
+    }
+  }
 }
 
 type GooglePlaceDetails = {
@@ -111,33 +145,35 @@ type WikiSummary = {
   thumbnail?: { source: string; width: number; height: number }
 }
 
-// Image fetching with fallback chain
+// Image fetching with fallback chain - improved matching
 export async function fetchImage(query: string, destination: string): Promise<string | null> {
   const cacheKey = `image_${query}_${destination}`
   const cached = getCached(cacheKey)
   if (cached) return cached
 
-  const searchQuery = `${query} ${destination}`.trim()
+  // Try specific venue name first, then add destination
+  const searchQuery = query.trim()
   
-  // Try Unsplash first
-  const unsplashUrl = await fetchUnsplashImage(searchQuery)
+  // Try Unsplash with specific venue name
+  let unsplashUrl = await fetchUnsplashImage(searchQuery)
+  if (unsplashUrl) {
+    setCache(cacheKey, unsplashUrl)
+    return unsplashUrl
+  }
+
+  // Try with destination added
+  const searchWithDestination = `${query} ${destination}`.trim()
+  unsplashUrl = await fetchUnsplashImage(searchWithDestination)
   if (unsplashUrl) {
     setCache(cacheKey, unsplashUrl)
     return unsplashUrl
   }
 
   // Try Pexels
-  const pexelsUrl = await fetchPexelsImage(searchQuery)
+  const pexelsUrl = await fetchPexelsImage(searchWithDestination)
   if (pexelsUrl) {
     setCache(cacheKey, pexelsUrl)
     return pexelsUrl
-  }
-
-  // Try Pixabay
-  const pixabayUrl = await fetchPixabayImage(searchQuery)
-  if (pixabayUrl) {
-    setCache(cacheKey, pixabayUrl)
-    return pixabayUrl
   }
 
   return null
@@ -184,7 +220,7 @@ async function fetchPexelsImage(query: string): Promise<string | null> {
 async function fetchPixabayImage(query: string): Promise<string | null> {
   try {
     const url = new URL('https://pixabay.com/api/')
-    url.searchParams.set('key', 'your-pixabay-key') // Free tier
+    url.searchParams.set('key', 'your-pixabay-key') // Free tier - replace with your key
     url.searchParams.set('q', query)
     url.searchParams.set('image_type', 'photo')
     url.searchParams.set('orientation', 'horizontal')
@@ -201,7 +237,7 @@ async function fetchPixabayImage(query: string): Promise<string | null> {
   }
 }
 
-// Enhanced Google Places API integration with multiple search strategies
+// Enhanced Google Places API integration with pagination
 export async function fetchNearbyAttractions(
   destination: string,
   latitude?: number,
@@ -211,7 +247,10 @@ export async function fetchNearbyAttractions(
   const cached = getCached(cacheKey)
   if (cached) return cached
 
-  if (!GOOGLE_PLACES_KEY) return []
+  if (!GOOGLE_PLACES_KEY) {
+    console.warn('⚠️ No Google Places API key found')
+    return []
+  }
 
   try {
     // First, get coordinates for the destination
@@ -219,6 +258,7 @@ export async function fetchNearbyAttractions(
     let lng = longitude
     
     if (!lat || !lng) {
+      console.log('📍 Geocoding destination:', destination)
       const geocodeUrl = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(destination)}&key=${GOOGLE_PLACES_KEY}`
       const geocodeRes = await fetch(geocodeUrl)
       if (geocodeRes.ok) {
@@ -226,67 +266,160 @@ export async function fetchNearbyAttractions(
         if (geocodeData.results?.[0]?.geometry?.location) {
           lat = geocodeData.results[0].geometry.location.lat
           lng = geocodeData.results[0].geometry.location.lng
+          console.log(`✅ Coordinates: ${lat}, ${lng}`)
         }
       }
     }
 
-    if (!lat || !lng) return []
+    if (!lat || !lng) {
+      console.error('❌ Could not get coordinates for destination')
+      return []
+    }
 
-    // Multiple search strategies for comprehensive results
+    const allPlaces: GooglePlace[] = []
+    
+    // Helper function to fetch places with pagination
+    async function fetchWithPagination(url: string, maxPages: number = 3): Promise<GooglePlace[]> {
+      const results: GooglePlace[] = []
+      let nextPageToken: string | undefined
+      let pageCount = 0
+      
+      do {
+        const pageUrl = nextPageToken 
+          ? `${url}&pagetoken=${nextPageToken}`
+          : url
+        
+        try {
+          const res = await fetch(pageUrl)
+          if (!res.ok) {
+            console.error(`Failed to fetch: ${res.status}`)
+            break
+          }
+          
+          const data = await res.json()
+          
+          if (data.results && data.results.length > 0) {
+            results.push(...data.results)
+            console.log(`  📄 Page ${pageCount + 1}: ${data.results.length} results (total: ${results.length})`)
+          }
+          
+          nextPageToken = data.next_page_token
+          pageCount++
+          
+          // Google requires a short delay before requesting next page
+          if (nextPageToken && pageCount < maxPages) {
+            await new Promise(resolve => setTimeout(resolve, 2000))
+          }
+          
+        } catch (error) {
+          console.error('Error fetching page:', error)
+          break
+        }
+        
+      } while (nextPageToken && pageCount < maxPages)
+      
+      return results
+    }
+
+    // Search strategies with pagination (up to 60 results per type)
     const searchStrategies = [
-      // Tourist attractions
-      `https://maps.googleapis.com/maps/api/place/nearbysearch/json?location=${lat},${lng}&radius=10000&type=tourist_attraction&key=${GOOGLE_PLACES_KEY}`,
-      // Museums
-      `https://maps.googleapis.com/maps/api/place/nearbysearch/json?location=${lat},${lng}&radius=10000&type=museum&key=${GOOGLE_PLACES_KEY}`,
-      // Parks
-      `https://maps.googleapis.com/maps/api/place/nearbysearch/json?location=${lat},${lng}&radius=10000&type=park&key=${GOOGLE_PLACES_KEY}`,
-      // Restaurants (high-rated)
-      `https://maps.googleapis.com/maps/api/place/nearbysearch/json?location=${lat},${lng}&radius=10000&type=restaurant&key=${GOOGLE_PLACES_KEY}`,
-      // Shopping centers
-      `https://maps.googleapis.com/maps/api/place/nearbysearch/json?location=${lat},${lng}&radius=10000&type=shopping_mall&key=${GOOGLE_PLACES_KEY}`,
-      // Entertainment venues
-      `https://maps.googleapis.com/maps/api/place/nearbysearch/json?location=${lat},${lng}&radius=10000&type=amusement_park&key=${GOOGLE_PLACES_KEY}`,
-      // Text search for popular places
-      `https://maps.googleapis.com/maps/api/place/textsearch/json?query=things+to+do+in+${encodeURIComponent(destination)}&key=${GOOGLE_PLACES_KEY}`,
-      `https://maps.googleapis.com/maps/api/place/textsearch/json?query=attractions+in+${encodeURIComponent(destination)}&key=${GOOGLE_PLACES_KEY}`,
-      `https://maps.googleapis.com/maps/api/place/textsearch/json?query=landmarks+in+${encodeURIComponent(destination)}&key=${GOOGLE_PLACES_KEY}`
+      {
+        name: 'Tourist Attractions',
+        url: `https://maps.googleapis.com/maps/api/place/nearbysearch/json?location=${lat},${lng}&radius=15000&type=tourist_attraction&key=${GOOGLE_PLACES_KEY}`
+      },
+      {
+        name: 'Museums',
+        url: `https://maps.googleapis.com/maps/api/place/nearbysearch/json?location=${lat},${lng}&radius=15000&type=museum&key=${GOOGLE_PLACES_KEY}`
+      },
+      {
+        name: 'Parks',
+        url: `https://maps.googleapis.com/maps/api/place/nearbysearch/json?location=${lat},${lng}&radius=15000&type=park&key=${GOOGLE_PLACES_KEY}`
+      },
+      {
+        name: 'Art Galleries',
+        url: `https://maps.googleapis.com/maps/api/place/nearbysearch/json?location=${lat},${lng}&radius=15000&type=art_gallery&key=${GOOGLE_PLACES_KEY}`
+      },
+      {
+        name: 'Shopping',
+        url: `https://maps.googleapis.com/maps/api/place/nearbysearch/json?location=${lat},${lng}&radius=15000&type=shopping_mall&key=${GOOGLE_PLACES_KEY}`
+      },
+      {
+        name: 'Restaurants (High-Rated)',
+        url: `https://maps.googleapis.com/maps/api/place/nearbysearch/json?location=${lat},${lng}&radius=10000&type=restaurant&rankby=prominence&key=${GOOGLE_PLACES_KEY}`
+      },
+      {
+        name: 'Entertainment',
+        url: `https://maps.googleapis.com/maps/api/place/nearbysearch/json?location=${lat},${lng}&radius=15000&type=amusement_park&key=${GOOGLE_PLACES_KEY}`
+      },
+      {
+        name: 'Things to Do',
+        url: `https://maps.googleapis.com/maps/api/place/textsearch/json?query=things+to+do+in+${encodeURIComponent(destination)}&key=${GOOGLE_PLACES_KEY}`
+      },
+      {
+        name: 'Attractions',
+        url: `https://maps.googleapis.com/maps/api/place/textsearch/json?query=attractions+in+${encodeURIComponent(destination)}&key=${GOOGLE_PLACES_KEY}`
+      },
+      {
+        name: 'Landmarks',
+        url: `https://maps.googleapis.com/maps/api/place/textsearch/json?query=landmarks+in+${encodeURIComponent(destination)}&key=${GOOGLE_PLACES_KEY}`
+      },
+      {
+        name: 'Must See',
+        url: `https://maps.googleapis.com/maps/api/place/textsearch/json?query=must+see+${encodeURIComponent(destination)}&key=${GOOGLE_PLACES_KEY}`
+      },
+      {
+        name: 'Popular Places',
+        url: `https://maps.googleapis.com/maps/api/place/textsearch/json?query=popular+places+${encodeURIComponent(destination)}&key=${GOOGLE_PLACES_KEY}`
+      }
     ]
 
-    // Execute all searches in parallel
-    const searchPromises = searchStrategies.map(async (url) => {
-      try {
-        const res = await fetch(url)
-        if (res.ok) {
-          const data = await res.json()
-          return data.results || []
-        }
-        return []
-      } catch {
-        return []
-      }
-    })
-
-    const allResults = await Promise.all(searchPromises)
+    console.log(`\n🔍 Searching for places in ${destination}...`)
     
-    // Flatten and deduplicate results
-    const allPlaces = allResults.flat()
+    // Execute all searches with pagination
+    for (const strategy of searchStrategies) {
+      console.log(`\n📍 ${strategy.name}:`)
+      const results = await fetchWithPagination(strategy.url, 3) // Up to 3 pages (60 results)
+      allPlaces.push(...results)
+      
+      // Small delay between different search types
+      await new Promise(resolve => setTimeout(resolve, 1000))
+    }
+    
+    console.log(`\n📊 Total results fetched: ${allPlaces.length}`)
+
+    // Deduplicate by place_id
     const uniquePlaces = allPlaces.filter((place, index, self) => 
       index === self.findIndex(p => p.place_id === place.place_id)
     )
+    
+    console.log(`✅ Unique places: ${uniquePlaces.length}`)
 
-    // Sort by rating and review count for better quality
-    const sortedPlaces = uniquePlaces
-      .filter(place => place.rating && place.rating >= 3.5) // Only places with good ratings
+    // Filter and sort by quality
+    const qualityPlaces = uniquePlaces
+      .filter(place => {
+        // Must have a rating
+        if (!place.rating || place.rating < 3.5) return false
+        
+        // Must have some reviews (indicates real place)
+        if (!place.user_ratings_total || place.user_ratings_total < 10) return false
+        
+        return true
+      })
       .sort((a, b) => {
+        // Sort by quality score: rating * log(reviews)
         const scoreA = (a.rating || 0) * Math.log((a.user_ratings_total || 0) + 1)
         const scoreB = (b.rating || 0) * Math.log((b.user_ratings_total || 0) + 1)
         return scoreB - scoreA
       })
-      .slice(0, 50) // Limit to top 50 results
+      .slice(0, 100) // Keep top 100
     
-    setCache(cacheKey, sortedPlaces)
-    return sortedPlaces
-  } catch {
+    console.log(`🌟 High-quality places: ${qualityPlaces.length}`)
+    
+    setCache(cacheKey, qualityPlaces)
+    return qualityPlaces
+    
+  } catch (error) {
+    console.error('❌ Error fetching nearby attractions:', error)
     return []
   }
 }
@@ -302,21 +435,13 @@ export async function fetchFoursquareVenues(destination: string): Promise<Foursq
   try {
     // Multiple search strategies for comprehensive results
     const searchQueries = [
-      // General destination search
       `https://api.foursquare.com/v3/places/search?query=${encodeURIComponent(destination)}&limit=20`,
-      // Tourist attractions
       `https://api.foursquare.com/v3/places/search?query=tourist+attractions+${encodeURIComponent(destination)}&limit=20`,
-      // Museums and galleries
       `https://api.foursquare.com/v3/places/search?query=museums+${encodeURIComponent(destination)}&limit=20`,
-      // Parks and nature
       `https://api.foursquare.com/v3/places/search?query=parks+${encodeURIComponent(destination)}&limit=20`,
-      // Restaurants and food
       `https://api.foursquare.com/v3/places/search?query=restaurants+${encodeURIComponent(destination)}&limit=20`,
-      // Shopping
       `https://api.foursquare.com/v3/places/search?query=shopping+${encodeURIComponent(destination)}&limit=20`,
-      // Entertainment
       `https://api.foursquare.com/v3/places/search?query=entertainment+${encodeURIComponent(destination)}&limit=20`,
-      // Landmarks
       `https://api.foursquare.com/v3/places/search?query=landmarks+${encodeURIComponent(destination)}&limit=20`
     ]
 
@@ -349,13 +474,13 @@ export async function fetchFoursquareVenues(destination: string): Promise<Foursq
 
     // Sort by rating and popularity
     const sortedVenues = uniqueVenues
-      .filter(venue => venue.rating && venue.rating >= 3.0) // Only venues with decent ratings
+      .filter(venue => venue.rating && venue.rating >= 3.0)
       .sort((a, b) => {
         const scoreA = (a.rating || 0) * Math.log((a.ratingSignals || 0) + 1)
         const scoreB = (b.rating || 0) * Math.log((b.ratingSignals || 0) + 1)
         return scoreB - scoreA
       })
-      .slice(0, 30) // Limit to top 30 results
+      .slice(0, 30)
     
     setCache(cacheKey, sortedVenues)
     return sortedVenues
@@ -398,6 +523,7 @@ export type EnrichedCard = {
   phone?: string
   priceLevel?: number
   openNow?: boolean
+  category?: string
 }
 
 export async function enrichCard(
@@ -465,7 +591,7 @@ export async function getRealAttractions(
   for (const place of places) {
     const image = await fetchImage(place.name, destination)
     
-    // Enhanced tag mapping for better categorization
+    // Enhanced tag mapping
     const enhancedTags = place.types.map(type => {
       const tagMap: Record<string, string> = {
         'tourist_attraction': 'Tourist Attraction',
@@ -491,20 +617,6 @@ export async function getRealAttractions(
         'bakery': 'Food',
         'book_store': 'Shopping',
         'clothing_store': 'Shopping',
-        'jewelry_store': 'Shopping',
-        'electronics_store': 'Shopping',
-        'furniture_store': 'Shopping',
-        'home_goods_store': 'Shopping',
-        'pharmacy': 'Services',
-        'hospital': 'Services',
-        'bank': 'Services',
-        'gas_station': 'Services',
-        'car_rental': 'Transportation',
-        'taxi_stand': 'Transportation',
-        'bus_station': 'Transportation',
-        'subway_station': 'Transportation',
-        'airport': 'Transportation',
-        'train_station': 'Transportation'
       }
       return tagMap[type] || type.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())
     })
@@ -514,14 +626,19 @@ export async function getRealAttractions(
       title: place.name,
       subtitle: place.vicinity,
       tags: enhancedTags.slice(0, 5),
+      category: enhancedTags[0] || 'General',
       image,
       rating: place.rating,
       reviews: place.user_ratings_total,
-      address: place.formatted_address
+      address: place.formatted_address,
+      priceLevel: place.price_level,
+      website: place.website,
+      phone: place.formatted_phone_number,
+      openNow: place.opening_hours?.open_now
     })
   }
 
-  // Process Foursquare results with enhanced data
+  // Process Foursquare results
   for (const venue of venues) {
     const image = await fetchImage(venue.name, destination)
     
@@ -530,6 +647,7 @@ export async function getRealAttractions(
       title: venue.name,
       subtitle: venue.location.address,
       tags: venue.categories.map(c => c.name),
+      category: venue.categories[0]?.name || 'General',
       image,
       rating: venue.rating,
       reviews: venue.ratingSignals,
@@ -542,7 +660,7 @@ export async function getRealAttractions(
     index === self.findIndex(t => t.title === item.title)
   )
 
-  // Enhanced filtering based on user preferences
+  // Filter by preferences
   let filteredAttractions = unique
 
   if (userTraits.length > 0 || userInterests.length > 0) {
@@ -559,7 +677,7 @@ export async function getRealAttractions(
     })
   }
 
-  // If filtering results in too few results, add some popular ones back
+  // Fallback to popular if too few results
   if (filteredAttractions.length < 10) {
     const popularAttractions = unique
       .filter(attraction => attraction.rating && attraction.rating >= 4.0)
@@ -571,10 +689,10 @@ export async function getRealAttractions(
       index === self.findIndex(t => t.id === item.id)
     )
     
-    return finalUnique.slice(0, 30) // Return up to 30 attractions
+    return finalUnique.slice(0, 30)
   }
 
-  return filteredAttractions.slice(0, 30) // Return up to 30 attractions
+  return filteredAttractions.slice(0, 30)
 }
 
 // ML-powered personalization integration
@@ -584,17 +702,14 @@ export async function getPersonalizedAttractions(
   userInterests: string[] = [],
   userId?: string
 ): Promise<EnrichedCard[]> {
-  // Get base attractions
   const baseAttractions = await getRealAttractions(destination, userTraits, userInterests, userId)
   
   if (!userId) {
     return baseAttractions
   }
 
-  // Import preference learning system
   const { preferenceLearningManager } = await import('./preferenceLearning')
   
-  // Convert to ML format
   const attractionFeatures = baseAttractions.map(attraction => ({
     id: attraction.id,
     title: attraction.title,
@@ -602,10 +717,10 @@ export async function getPersonalizedAttractions(
     rating: attraction.rating || 0,
     reviews: attraction.reviews || 0,
     priceLevel: attraction.priceLevel,
-    category: attraction.tags?.[0] || 'General',
+    category: attraction.category || attraction.tags?.[0] || 'General',
     location: {
       city: destination,
-      country: destination, // Simplified for now
+      country: 'USA',
     },
     features: {
       hasPhotos: !!attraction.image,
@@ -615,13 +730,12 @@ export async function getPersonalizedAttractions(
     }
   }))
 
-  // Get personalized recommendations
   const personalizedAttractions = preferenceLearningManager.getPersonalizedRecommendations(
     userId,
-    attractionFeatures
+    attractionFeatures,
+    []
   )
 
-  // Convert back to EnrichedCard format
   return personalizedAttractions.map(attraction => {
     const originalAttraction = baseAttractions.find(a => a.id === attraction.id)
     return originalAttraction || {
@@ -629,6 +743,7 @@ export async function getPersonalizedAttractions(
       title: attraction.title,
       subtitle: attraction.location.city,
       tags: attraction.tags,
+      category: attraction.category,
       image: undefined,
       rating: attraction.rating,
       reviews: attraction.reviews,
