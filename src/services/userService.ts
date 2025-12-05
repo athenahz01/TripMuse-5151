@@ -1,87 +1,93 @@
-import { supabase } from '../lib/supabase';
-
-// Define UserPreferences type to match useTaste store
-interface UserPreferences {
-  interests: string[];
-  traits: string[];
-  budgetLevel: number;
-  travelStyle: string;
-  recentTrip?: string;
-}
+import { supabase } from '../lib/supabase'
 
 export const userService = {
-  // Create or get user
-  async getOrCreateUser(tempId?: string): Promise<string> {
+  /**
+   * Get or create user in database
+   */
+  async getOrCreateUser(clientUserId: string): Promise<string> {
     try {
-      // Check if user exists in localStorage
-      const existingId = tempId || localStorage.getItem('tripmuse_user_id');
-      
-      if (existingId) {
-        const { data, error } = await supabase
-          .from('users')
-          .select('id')
-          .eq('id', existingId)
-          .single();
-        
-        if (data && !error) {
-          return data.id;
-        }
+      // Check if user exists
+      const { data: existingUser, error: fetchError } = await supabase
+        .from('users')
+        .select('id')
+        .eq('id', clientUserId)
+        .single()
+
+      if (existingUser) {
+        console.log('✅ User exists:', clientUserId)
+        return existingUser.id
       }
-      
-      // Create new user
-      const { data, error } = await supabase
+
+      // User doesn't exist, create new one
+      console.log('🆕 Creating new user:', clientUserId)
+      const { data: newUser, error: insertError } = await supabase
         .from('users')
         .insert({
+          id: clientUserId,
           onboarding_completed: false,
+          preferences: {}
         })
         .select()
-        .single();
-      
-      if (error) throw error;
-      
-      localStorage.setItem('tripmuse_user_id', data.id);
-      return data.id;
+        .single()
+
+      if (insertError) {
+        console.error('❌ Error creating user:', insertError)
+        throw insertError
+      }
+
+      console.log('✅ User created successfully:', newUser.id)
+      return newUser.id
     } catch (error) {
-      console.error('Error creating user:', error);
-      throw error;
+      console.error('Error in getOrCreateUser:', error)
+      // Return the clientUserId anyway to allow the app to continue
+      return clientUserId
     }
   },
 
-  // Save user preferences
+  /**
+   * Save user preferences
+   */
   async savePreferences(
     userId: string,
-    preferences: UserPreferences
+    preferences: {
+      interests: string[]
+      traits: string[]
+      budgetLevel: number
+      travelStyle: string
+    }
   ): Promise<void> {
     try {
       const { error } = await supabase
         .from('users')
         .update({
           preferences,
-          onboarding_completed: true,
+          onboarding_completed: true
         })
-        .eq('id', userId);
-      
-      if (error) throw error;
+        .eq('id', userId)
+
+      if (error) throw error
+      console.log('✅ Preferences saved for user:', userId)
     } catch (error) {
-      console.error('Error saving preferences:', error);
-      throw error;
+      console.error('Error saving preferences:', error)
     }
   },
 
-  // Get user preferences
-  async getPreferences(userId: string): Promise<UserPreferences | null> {
+  /**
+   * Get user preferences
+   */
+  async getPreferences(userId: string): Promise<any> {
     try {
       const { data, error } = await supabase
         .from('users')
         .select('preferences')
         .eq('id', userId)
-        .single();
-      
-      if (error) throw error;
-      return data?.preferences as UserPreferences | null;
+        .single()
+
+      if (error) throw error
+      return data?.preferences || {}
     } catch (error) {
-      console.error('Error fetching preferences:', error);
-      return null;
+      console.error('Error getting preferences:', error)
+      return {}
     }
-  },
-};
+  }
+}

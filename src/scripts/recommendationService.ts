@@ -40,14 +40,17 @@ export const recommendationService = {
       console.log(`👆 User has swiped: ${swipedVenueIds.length} venues`)
       
       // Filter out already swiped venues
-      const unseenVenues = allVenues.filter(v => !swipedVenueIds.includes(v.id))
+      const unseenVenues = allVenues.filter(venue => {
+        const isSwipedById = swipedVenueIds.includes(venue.id)
+        const isSwipedByPlaceId = venue.google_place_id && swipedVenueIds.includes(venue.google_place_id)
+        return !isSwipedById && !isSwipedByPlaceId
+      })
+      
       console.log(`👀 Unseen venues: ${unseenVenues.length}`)
       
       if (unseenVenues.length === 0) {
-        // User has seen everything, return top-rated venues
-        return allVenues
-          .sort((a, b) => (b.rating || 0) - (a.rating || 0))
-          .slice(0, limit)
+        console.log('⚠️ User has seen all venues!')
+        return []
       }
       
       // Get user's swipe history for learning
@@ -58,49 +61,79 @@ export const recommendationService = {
       console.log(`❤️ Liked: ${likedVenues.length} venues`)
       console.log(`👎 Disliked: ${dislikedVenues.length} venues`)
       
-      // LEARNING: Extract patterns from liked venues
+      // LEARNING: Extract patterns from swipe history
       const likedCategories = new Set(likedVenues.map(v => v.venues?.category).filter(Boolean))
       const likedTags = new Set(
         likedVenues.flatMap(v => v.venues?.tags || []).map(t => t.toLowerCase())
       )
       
-      // LEARNING: Extract anti-patterns from disliked venues
       const dislikedCategories = new Set(dislikedVenues.map(v => v.venues?.category).filter(Boolean))
       const dislikedTags = new Set(
         dislikedVenues.flatMap(v => v.venues?.tags || []).map(t => t.toLowerCase())
       )
       
-      console.log(`📚 Learning patterns:`)
-      console.log(`  Liked categories:`, Array.from(likedCategories))
-      console.log(`  Disliked categories:`, Array.from(dislikedCategories))
+      console.log('\n' + '='.repeat(70))
+      console.log('🧠 MACHINE LEARNING - ANALYZING YOUR PREFERENCES')
+      console.log('='.repeat(70))
+      console.log('❤️ LIKED VENUES:', likedVenues.length)
+      console.log('   Categories:', Array.from(likedCategories).join(', ') || 'None yet')
+      console.log('   Tags:', Array.from(likedTags).slice(0, 8).join(', ') || 'None yet')
+      console.log('')
+      console.log('👎 DISLIKED VENUES:', dislikedVenues.length)
+      console.log('   Categories:', Array.from(dislikedCategories).join(', ') || 'None yet')
+      console.log('   Tags:', Array.from(dislikedTags).slice(0, 8).join(', ') || 'None yet')
+      console.log('='.repeat(70) + '\n')
       
-      // Score each unseen venue with learned preferences
-      const scoredVenues = unseenVenues.map(venue => {
+      // CRITICAL: Filter out disliked patterns BEFORE scoring
+      console.log('🔍 FILTERING PHASE - Removing disliked content...\n')
+      
+      const filteredVenues = unseenVenues.filter(venue => {
+        // HARD FILTER: Remove venues in disliked categories (if user has history)
+        if (dislikedVenues.length >= 2 && dislikedCategories.has(venue.category)) {
+          console.log(`  ❌ BLOCKED: "${venue.name}" (${venue.category}) - You disliked this category`)
+          return false
+        }
+        
+        // HARD FILTER: Remove venues with multiple disliked tags
+        const venueTags = venue.tags?.map(t => t.toLowerCase()) || []
+        const matchingDislikedTags = venueTags.filter(t => dislikedTags.has(t))
+        if (dislikedVenues.length >= 2 && matchingDislikedTags.length >= 2) {
+          console.log(`  ❌ BLOCKED: "${venue.name}" - Has disliked tags: ${matchingDislikedTags.join(', ')}`)
+          return false
+        }
+        
+        return true
+      })
+      
+      console.log(`\n✅ Filtering complete: ${unseenVenues.length} → ${filteredVenues.length} venues\n`)
+      
+      if (filteredVenues.length === 0) {
+        console.log('⚠️ Hard filtering removed all venues, using unseen venues')
+        return unseenVenues.slice(0, limit)
+      }
+      
+      // Score remaining venues
+      const scoredVenues = filteredVenues.map(venue => {
         const baseScore = this.scoreVenue(venue, preferences, likedVenues)
         
-        // BOOST: Venues in liked categories
+        // MASSIVE BOOST: Venues in liked categories
         if (likedCategories.has(venue.category)) {
-          baseScore.score += 0.2
-          baseScore.reasons.unshift('✨ Category you loved!')
+          baseScore.score += 0.5
+          baseScore.reasons.unshift('✨ You loved this category!')
         }
         
         // BOOST: Venues with liked tags
         const venueTags = venue.tags?.map(t => t.toLowerCase()) || []
         const matchingLikedTags = venueTags.filter(t => likedTags.has(t))
         if (matchingLikedTags.length > 0) {
-          baseScore.score += 0.15 * matchingLikedTags.length
-          baseScore.reasons.unshift(`🎯 Has ${matchingLikedTags[0]} (you liked this!)`)
+          baseScore.score += 0.3 * matchingLikedTags.length
+          baseScore.reasons.unshift(`🎯 Has ${matchingLikedTags[0]}!`)
         }
         
-        // PENALTY: Venues in disliked categories
-        if (dislikedCategories.has(venue.category)) {
-          baseScore.score -= 0.3
-        }
-        
-        // PENALTY: Venues with disliked tags
+        // PENALTY: Venues with some disliked tags (not filtered out yet)
         const matchingDislikedTags = venueTags.filter(t => dislikedTags.has(t))
         if (matchingDislikedTags.length > 0) {
-          baseScore.score -= 0.2 * matchingDislikedTags.length
+          baseScore.score -= 0.4 * matchingDislikedTags.length
         }
         
         return baseScore
@@ -110,33 +143,31 @@ export const recommendationService = {
       scoredVenues.sort((a, b) => b.score - a.score)
       
       // Show top 10 scores for debugging
-      console.log(`\n🏆 Top 10 recommended venues:`)
+      console.log('\n' + '='.repeat(70))
+      console.log('🏆 TOP 10 RECOMMENDED VENUES FOR YOU')
+      console.log('='.repeat(70))
       scoredVenues.slice(0, 10).forEach((sv, i) => {
-        console.log(`  ${i + 1}. ${sv.venue.name} (${sv.venue.category}) - Score: ${sv.score.toFixed(2)}`)
-        console.log(`     Reasons: ${sv.reasons.join(', ')}`)
+        console.log(`${i + 1}. ${sv.venue.name} (${sv.venue.category})`)
+        console.log(`   Score: ${sv.score.toFixed(2)} | ${sv.reasons.slice(0, 2).join(', ')}`)
       })
+      console.log('='.repeat(70) + '\n')
       
-      // STRICTER FILTERING based on learned preferences
-      let minScore = 0.3
+      // ADAPTIVE THRESHOLD: Be stricter if user has preferences
+      let minScore = 0.2
       
-      // If user has liked stuff, be more selective
       if (likedVenues.length > 3) {
-        minScore = 0.4
-        console.log(`🎓 User has history, using stricter threshold: ${minScore}`)
+        minScore = 0.5
+        console.log(`🎓 User has strong preferences, using strict threshold: ${minScore}`)
+      } else if (preferences.interests.length > 0 || preferences.traits.length > 0) {
+        minScore = 0.3
+        console.log(`📝 User has stated preferences, using medium threshold: ${minScore}`)
       }
       
       const goodMatches = scoredVenues.filter(sv => sv.score >= minScore)
       
-      // If we filtered out too many, relax the threshold
       let finalVenues = goodMatches
-      if (goodMatches.length < 10) {
+      if (goodMatches.length < 5) {
         console.log('⚠️ Strict filtering left too few venues, relaxing threshold')
-        finalVenues = scoredVenues.filter(sv => sv.score >= 0.2)
-      }
-      
-      // If still too few, just take top scorers
-      if (finalVenues.length < 5) {
-        console.log('⚠️ Still too few venues, showing top-scored')
         finalVenues = scoredVenues.slice(0, 20)
       }
       
@@ -373,6 +404,29 @@ export const recommendationService = {
         return keywords.some(k => 
           v.tags?.some(tag => tag.toLowerCase().includes(k)) ||
           v.category.toLowerCase().includes(k) ||
+          venueText.includes(k)
+        )
+      },
+      'ocean-view': (v) => {
+        const keywords = ['ocean', 'sea', 'water', 'harbor', 'waterfront', 'pier', 'beach', 'coast']
+        return keywords.some(k => 
+          v.tags?.some(tag => tag.toLowerCase().includes(k)) ||
+          v.name.toLowerCase().includes(k) ||
+          venueText.includes(k)
+        )
+      },
+      'mountains': (v) => {
+        const keywords = ['mountain', 'hill', 'peak', 'summit', 'highland', 'overlook', 'vista']
+        return keywords.some(k => 
+          v.tags?.some(tag => tag.toLowerCase().includes(k)) ||
+          v.name.toLowerCase().includes(k) ||
+          venueText.includes(k)
+        )
+      },
+      'hiking': (v) => {
+        const keywords = ['hiking', 'trail', 'trek', 'walk', 'nature walk', 'path']
+        return keywords.some(k => 
+          v.tags?.some(tag => tag.toLowerCase().includes(k)) ||
           venueText.includes(k)
         )
       }

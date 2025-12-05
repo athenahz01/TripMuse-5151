@@ -574,6 +574,7 @@ export async function enrichCards(
 }
 
 // Enhanced attraction fetching with ML-powered personalization
+// Enhanced attraction fetching with ML-powered personalization
 export async function getRealAttractions(
   destination: string, 
   userTraits: string[] = [],
@@ -589,7 +590,24 @@ export async function getRealAttractions(
 
   // Process Google Places results with enhanced data
   for (const place of places) {
-    const image = await fetchImage(place.name, destination)
+    let image: string | null = null
+    
+    // PRIORITY 1: Use Google Places photo if available
+    if (place.photos && place.photos.length > 0 && GOOGLE_PLACES_KEY) {
+      const photoReference = place.photos[0].photo_reference
+      image = `https://maps.googleapis.com/maps/api/place/photo?maxwidth=800&photoreference=${photoReference}&key=${GOOGLE_PLACES_KEY}`
+      console.log(`  ✓ Google photo for: ${place.name}`)
+    } else {
+      // PRIORITY 2: Try Unsplash/Pexels as fallback
+      try {
+        image = await fetchImage(place.name, destination)
+        if (image) {
+          console.log(`  ✓ Stock photo for: ${place.name}`)
+        }
+      } catch (error) {
+        console.log(`  ⚠️ No image for: ${place.name}`)
+      }
+    }
     
     // Enhanced tag mapping
     const enhancedTags = place.types.map(type => {
@@ -640,7 +658,17 @@ export async function getRealAttractions(
 
   // Process Foursquare results
   for (const venue of venues) {
-    const image = await fetchImage(venue.name, destination)
+    // Try to get Foursquare photo first
+    let image: string | null = null
+    
+    if (venue.photos?.groups?.[0]?.items?.[0]) {
+      const photo = venue.photos.groups[0].items[0]
+      image = `${photo.prefix}original${photo.suffix}`
+      console.log(`  ✓ Foursquare photo for: ${venue.name}`)
+    } else {
+      // Fallback to stock photos
+      image = await fetchImage(venue.name, destination)
+    }
     
     attractions.push({
       id: `venue_${venue.id}`,

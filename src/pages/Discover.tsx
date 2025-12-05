@@ -11,29 +11,60 @@ export function Discover() {
   const { venues, loading, error, reload } = usePersonalizedVenues()
 
   const handleSwipe = async (id: string, direction: 'left' | 'right', venueData?: any) => {
+    console.log('\n' + '='.repeat(60))
+    console.log('🔥 SWIPE EVENT TRIGGERED')
+    console.log('='.repeat(60))
+    console.log('Venue:', venueData?.name)
+    console.log('Category:', venueData?.category)
+    console.log('Direction:', direction === 'right' ? '❤️ LIKE' : '👎 DISLIKE')
+    console.log('User ID:', userId)
+    console.log('Current stats - Likes:', likes.length, 'Skips:', skips.length)
+    console.log('='.repeat(60) + '\n')
+
     // Record in database
     if (userId && venueData) {
-      await swipeService.recordSwipe(
-        userId,
-        id,
-        direction === 'right' ? 'like' : 'dislike',
-        0,
-        {}
-      )
+      try {
+        console.log('💾 Saving swipe to database...')
+        await swipeService.recordSwipe(
+          userId,
+          id,
+          direction === 'right' ? 'like' : 'dislike',
+          0,
+          {}
+        )
+        console.log('✅ Swipe saved to database successfully')
+      } catch (error) {
+        console.error('❌ ERROR saving swipe:', error)
+      }
+    } else {
+      console.warn('⚠️ MISSING DATA - Cannot save swipe')
+      console.warn('  userId:', userId)
+      console.warn('  venueData:', venueData)
     }
 
     // Update local state
     if (direction === 'right') {
       like(id, venueData)
+      console.log('❤️ Added to LIKES list')
     } else {
       skip(id, venueData)
+      console.log('👎 Added to SKIPS list')
     }
 
-    // Auto-refresh recommendations every 5 swipes to show learning
-    const totalSwipes = likes.length + skips.length
-    if (totalSwipes > 0 && totalSwipes % 5 === 0) {
-      console.log('🔄 Auto-refreshing recommendations after 5 swipes...')
-      setTimeout(() => reload(), 500)
+    const newTotal = likes.length + skips.length + 1
+    console.log('📊 NEW TOTALS - Likes:', likes.length, 'Skips:', skips.length + 1, 'Total:', newTotal)
+
+    // CRITICAL: Reload after every dislike to learn immediately
+    // Also reload every 3 swipes to refresh recommendations
+    if (direction === 'left' || newTotal % 3 === 0) {
+      console.log('\n🔄 TRIGGERING RECOMMENDATION RELOAD...')
+      console.log('  Reason:', direction === 'left' ? 'Dislike detected' : `${newTotal} swipes reached`)
+      console.log('')
+      setTimeout(() => {
+        reload()
+      }, 500)
+    } else {
+      console.log('\n⏭️ Not reloading yet (will reload after dislike or every 3 swipes)\n')
     }
   }
 

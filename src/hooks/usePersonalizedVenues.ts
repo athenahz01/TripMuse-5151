@@ -17,8 +17,8 @@ export function usePersonalizedVenues() {
     travelStyle,
     destination,
     setVenues: setStoreVenues,
-    likes,  // Add this - track likes
-    skips   // Add this - track skips
+    likes,
+    skips
   } = useTaste()
 
   // Re-run when user swipes (likes/skips change)
@@ -32,26 +32,33 @@ export function usePersonalizedVenues() {
       setLoading(false)
       return
     }
-
+  
     try {
       setLoading(true)
       setError(null)
-
-      console.log('🔄 Loading personalized venues...')
+  
+      console.log('\n🔄 Loading personalized venues...')
+      console.log(`  Interests: ${interests.join(', ')}`)
+      console.log(`  Traits: ${traits.join(', ')}`)
       console.log(`  User has ${likes.length} likes, ${skips.length} skips`)
-
-      // Get or create user in database
+  
+      // CRITICAL: Ensure user exists in database first
+      console.log('👤 Ensuring user exists in database...')
       const dbUserId = await userService.getOrCreateUser(userId)
-
+      console.log('✅ User confirmed:', dbUserId)
+  
       // Save current preferences
+      console.log('💾 Saving preferences...')
       await userService.savePreferences(dbUserId, {
         interests,
         traits,
         budgetLevel,
         travelStyle,
       })
-
-      // Get personalized recommendations (THIS IS WHERE LEARNING HAPPENS)
+      console.log('✅ Preferences saved')
+  
+      // Get personalized recommendations
+      console.log('🎯 Getting personalized recommendations...')
       let personalizedVenues = await recommendationService.getPersonalizedVenues(
         dbUserId,
         {
@@ -62,19 +69,19 @@ export function usePersonalizedVenues() {
         },
         30
       )
-
+  
       // If no venues in database, use fallback
       if (personalizedVenues.length === 0) {
         console.log('⚠️ No venues in database, using fallback data')
         personalizedVenues = FALLBACK_NYC_VENUES.slice(0, 30) as Venue[]
       }
-
-      console.log(`✅ Loaded ${personalizedVenues.length} personalized venues`)
+  
+      console.log(`✅ Loaded ${personalizedVenues.length} personalized venues\n`)
       setVenues(personalizedVenues)
       setStoreVenues(personalizedVenues)
       setLoading(false)
     } catch (err) {
-      console.error('Error loading personalized venues:', err)
+      console.error('❌ Error loading personalized venues:', err)
       
       // Fallback to static venues on error
       console.log('⚠️ Using fallback data due to error')

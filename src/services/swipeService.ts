@@ -70,13 +70,16 @@ export const swipeService = {
       const { data, error } = await supabase
         .from('swipe_interactions')
         .select('venue_id')
-        .eq('user_id', userId);
-      
-      if (error) throw error;
-      return data?.map((item) => item.venue_id) || [];
+        .eq('user_id', userId)
+  
+      if (error) throw error
+  
+      // Return unique venue IDs
+      const venueIds = data?.map(d => d.venue_id).filter(Boolean) || []
+      return [...new Set(venueIds)]
     } catch (error) {
-      console.error('Error fetching swiped venue IDs:', error);
-      return [];
+      console.error('Error getting swiped venue IDs:', error)
+      return []
     }
   },
 };

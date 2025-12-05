@@ -1,25 +1,11 @@
 import 'dotenv/config'
 import { supabase } from '../lib/supabase'
-import { fetchNearbyAttractions, fetchImage } from '../lib/api'
+import { fetchNearbyAttractions } from '../lib/api'
 
 // Helper to get environment variables in Node.js
 const getEnv = (key: string): string | undefined => {
   return process.env[key];
 };
-
-// Curated seed data to ensure we have NYC icons
-const CURATED_NYC_ATTRACTIONS = [
-  { name: 'Statue of Liberty', category: 'Landmark', tags: ['Landmark', 'Historic', 'Iconic'], priceLevel: 2 },
-  { name: 'Empire State Building', category: 'Landmark', tags: ['Landmark', 'Views', 'Architecture'], priceLevel: 3 },
-  { name: 'Central Park', category: 'Park', tags: ['Park', 'Nature', 'Outdoor'], priceLevel: 1 },
-  { name: 'Times Square', category: 'Entertainment', tags: ['Entertainment', 'Shopping', 'Nightlife'], priceLevel: 1 },
-  { name: 'Brooklyn Bridge', category: 'Landmark', tags: ['Landmark', 'Architecture', 'Photography'], priceLevel: 1 },
-  { name: 'Metropolitan Museum of Art', category: 'Museum', tags: ['Museum', 'Art', 'Culture'], priceLevel: 3 },
-  { name: 'Museum of Modern Art', category: 'Museum', tags: ['Museum', 'Art', 'Modern'], priceLevel: 3 },
-  { name: 'American Museum of Natural History', category: 'Museum', tags: ['Museum', 'Science', 'Family'], priceLevel: 3 },
-  { name: '9/11 Memorial & Museum', category: 'Museum', tags: ['Museum', 'History', 'Memorial'], priceLevel: 3 },
-  { name: 'High Line', category: 'Park', tags: ['Park', 'Art', 'Outdoor'], priceLevel: 1 },
-]
 
 export async function seedNYCVenues() {
   console.log('🗽 NYC Venues Seeding Started!\n')
@@ -115,24 +101,48 @@ export async function seedNYCVenues() {
         .map(t => t.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()))
         .filter(t => t !== 'Point Of Interest' && t !== 'Establishment')
       
-      // Fetch image (with rate limiting)
+      // PRIORITY: Get Google Places photo first, then Unsplash fallback
       let image: string | null = null
+      let imageSource = 'none'
+      
       try {
-        image = await fetchImage(place.name, 'New York City')
-        if (image) {
-          console.log(`  ✓ Image found for: ${place.name}`)
+        // Try Google Places photo first
+        if (place.photos && place.photos.length > 0) {
+          const photoReference = place.photos[0].photo_reference
+          const googlePlacesKey = getEnv('VITE_GOOGLE_PLACES_KEY')
+          
+          if (googlePlacesKey) {
+            image = `https://maps.googleapis.com/maps/api/place/photo?maxwidth=800&photoreference=${photoReference}&key=${googlePlacesKey}`
+            imageSource = 'Google Places'
+            console.log(`  ✓ Google photo for: ${place.name}`)
+          }
+        }
+        
+        // Fallback to Unsplash only if no Google photo
+        if (!image) {
+          const { fetchImage } = await import('../lib/api')
+          image = await fetchImage(place.name, 'New York')
+          if (image) {
+            imageSource = 'Unsplash'
+            console.log(`  ✓ Unsplash photo for: ${place.name}`)
+          }
         }
       } catch (error) {
         console.log(`  ⚠️ No image for: ${place.name}`)
       }
       
+      // Enhanced description
+      const enhancedDescription = place.vicinity 
+        ? `${place.name} - ${category} located in ${place.vicinity}.`
+        : `Experience ${place.name}, a top-rated ${category.toLowerCase()} in New York City.`
+      
       const venue = {
         name: place.name,
         category,
-        description: `Experience ${place.name}, ${category.toLowerCase()} in New York City.`,
+        description: enhancedDescription,
         location: {
-          lat: 40.7128,
-          lng: -74.0060,
+          lat: place.geometry?.location?.lat || 40.7128,
+          lng: place.geometry?.location?.lng || -74.0060,
           address: place.formatted_address || place.vicinity || 'New York, NY'
         },
         price_level: place.price_level || 2,
